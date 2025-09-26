@@ -1,7 +1,0 @@
-    {
-        "TOKYO-123": { "url": "https://threejs.org/examples/models/gltf/LittlestTokyo.glb", "description": "샘플: Littlest Tokyo" },
-        "FOX-456": { "type": "procedural", "generator": "createFoxModel", "description": "샘플: 로우폴리 여우" },
-        "POOP-789": { "type": "procedural", "generator": "createPoopModel", "description": "샘플: 응가" },
-        "COMMISSION-A": { "url": "https://.../your_first_model_url.glb", "description": "김XX 고객님 커미션" }
-    }
-    
