@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced 3D Model Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', 'Noto Sans KR', sans-serif; }
+        .loader { border: 8px solid #f3f3f3; border-top: 8px solid #3b82f6; border-radius: 50%; width: 60px; height: 60px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #controls-panel::-webkit-scrollbar { width: 4px; }
+        #controls-panel::-webkit-scrollbar-track { background: transparent; }
+        #controls-panel::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 2px; }
+        .model-list-item { cursor: pointer; transition: background-color 0.2s; }
+        .model-list-item:hover { background-color: #374151; }
+        .model-list-item.active { background-color: #1d4ed8; }
+        .bg-preview, .preset-btn { width: 100%; height: 40px; border-radius: 6px; border: 2px solid transparent; transition: all 0.2s; }
+        .bg-preview:hover, .bg-preview.active { border-color: #3b82f6; }
+        .preset-btn { background-color: #374151; }
+        .preset-btn:hover { background-color: #4b5563; }
+    </style>
+</head>
+<body class="bg-gray-900 text-white overflow-hidden">
+
+    <!-- 3D 뷰어 화면 -->
+    <div id="canvas-container" class="fixed top-0 left-0 w-full h-full z-0"></div>
+    <div id="loading-indicator" class="fixed inset-0 bg-gray-900 bg-opacity-80 flex-col justify-center items-center z-30 hidden">
+        <div class="loader"></div>
+        <p id="loading-text" class="mt-4 text-lg">모델을 불러오는 중...</p>
+    </div>
+    <div id="top-header" class="fixed top-0 left-0 w-full p-4 md:p-6 bg-gradient-to-b from-black/70 to-transparent z-10">
+        <div class="max-w-7xl mx-auto">
+            <h1 class="text-2xl md:text-3xl font-bold text-white">3D 모델 뷰어</h1>
+            <p id="model-description" class="mt-1 text-gray-300 text-sm md:text-base">모델을 선택하거나 불러와주세요.</p>
+        </div>
+    </div>
+    <div id="controls-panel" class="fixed top-24 right-4 md:right-6 bg-gray-800 bg-opacity-80 backdrop-blur-sm rounded-lg p-4 shadow-lg w-72 max-h-[calc(100vh-150px)] overflow-y-auto z-20">
+        <!-- 내 모델 관리 섹션 -->
+        <div>
+            <h3 class="font-bold text-lg mb-2 border-b border-gray-600 pb-1">내 모델 관리</h3>
+            <input type="text" id="serial-input" class="w-full bg-gray-700 border border-gray-600 rounded-md p-2 mt-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="시리얼 번호 입력">
+            <button id="load-serial-button" class="w-full mt-2 bg-blue-600 hover:bg-blue-700 rounded-md py-2 text-sm font-semibold transition-colors">불러오기</button>
+            <p id="error-message" class="text-red-400 mt-2 h-4 text-xs"></p>
+            <div id="loaded-list-container" class="mt-2">
+                <h4 class="text-md font-semibold text-gray-300 mt-2">내 모델 목록</h4>
+                <ul id="loaded-list" class="mt-1 text-sm text-gray-200 bg-gray-900/50 rounded-md max-h-24 overflow-y-auto"></ul>
+            </div>
+        </div>
+        <!-- 샘플 모델 섹션 -->
+        <div class="mt-4">
+            <h3 class="font-bold text-lg mb-2 border-b border-gray-600 pb-1">샘플 보기</h3>
+            <select id="sample-select" class="w-full bg-gray-700 border border-gray-600 rounded-md p-2 mt-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="none" disabled selected>샘플 선택...</option>
+                <option value="TOKYO-123">Littlest Tokyo</option>
+                <option value="FOX-456">로우폴리 여우</option>
+                <option value="POOP-789">응가</option>
+            </select>
+        </div>
+        <!-- 조명 제어 섹션 -->
+        <div id="light-controls" class="mt-4">
+            <h3 class="font-bold text-lg mb-2 border-b border-gray-600 pb-1">조명 제어</h3>
+            <div class="space-y-2 text-sm">
+                <div><label for="light-rotation" class="text-gray-300">회전</label><input type="range" id="light-rotation" min="0" max="360" value="45" class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer"></div>
+                <div><label for="light-height" class="text-gray-300">높이</label><input type="range" id="light-height" min="2" max="20" value="10" class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer"></div>
+            </div>
+        </div>
+        <!-- 시각 효과 섹션 -->
+        <div id="effects-controls" class="mt-4">
+            <h3 class="font-bold text-lg mb-2 border-b border-gray-600 pb-1">시각 효과</h3>
+            <div class="space-y-2 text-sm">
+                <div>
+                    <label for="bloom-preset" class="text-gray-300">블룸 효과</label>
+                    <select id="bloom-preset" class="w-full bg-gray-700 border border-gray-600 rounded-md p-2 mt-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="off">끄기</option>
+                        <option value="subtle">은은하게</option>
+                        <option value="strong">강하게</option>
+                        <option value="dreamy">몽환적으로</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="filter-preset" class="text-gray-300">필터 효과</label>
+                    <select id="filter-preset" class="w-full bg-gray-700 border border-gray-600 rounded-md p-2 mt-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="none">없음</option>
+                        <option value="grayscale">흑백</option>
+                        <option value="sepia">세피아</option>
+                        <option value="film">필름 그레인</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+        <!-- 동적 컨트롤 섹션 -->
+        <div id="dynamic-controls" class="mt-4"></div>
+        <!-- 배경 설정 섹션 (고정) -->
+        <div class="mt-4">
+            <h3 class="font-bold text-lg mb-2 border-b border-gray-600 pb-1">배경 설정</h3>
+            <div class="grid grid-cols-3 gap-2">
+                <button class="bg-preview active" data-bg-type="color" data-bg-value="#111827" style="background-color: #111827;"></button>
+                <button class="bg-preview" data-bg-type="color" data-bg-value="#e5e7eb" style="background-color: #e5e7eb;"></button>
+                <button class="bg-preview" data-bg-type="hdri" data-bg-value="https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/venice_sunset_1k.hdr" style="background-image: linear-gradient(to bottom right, #fca5a5, #60a5fa);"></button>
+                <button class="bg-preview" data-bg-type="hdri" data-bg-value="https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/studio_small_03_1k.hdr" style="background-image: linear-gradient(to bottom right, #a78bfa, #fde047);"></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 하단 아이콘 버튼들 -->
+    <div class="fixed bottom-4 left-4 flex space-x-2 z-20">
+        <div class="relative group"><button id="help-button" class="bg-gray-700 hover:bg-gray-600 rounded-full w-12 h-12 flex justify-center items-center shadow-lg"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></button><span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-900 text-white text-xs rounded-md scale-0 group-hover:scale-100 transition-transform origin-bottom pointer-events-none">조작법</span></div>
+        <div class="relative group"><button id="toggle-ui-button" class="bg-gray-700 hover:bg-gray-600 rounded-full w-12 h-12 flex justify-center items-center shadow-lg"><svg id="icon-hide" xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg><svg id="icon-show" xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" /></svg></button><span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-900 text-white text-xs rounded-md scale-0 group-hover:scale-100 transition-transform origin-bottom pointer-events-none">UI 끄기/켜기</span></div>
+        <div class="relative group"><button id="screenshot-button" class="bg-gray-700 hover:bg-gray-600 rounded-full w-12 h-12 flex justify-center items-center shadow-lg"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" /></svg></button><span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-900 text-white text-xs rounded-md scale-0 group-hover:scale-100 transition-transform origin-bottom pointer-events-none">스크린샷 저장하기</span></div>
+    </div>
+
+    <!-- 도움말 팝업 -->
+    <div id="help-modal" class="fixed inset-0 z-50 flex justify-center items-center bg-black/60 backdrop-blur-sm p-4 hidden">
+        <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-lg p-6 relative">
+            <button id="close-help-button" class="absolute top-3 right-3 text-gray-400 hover:text-white"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>
+            <h2 class="text-2xl font-bold mb-4">조작 방법 안내</h2><div class="space-y-4 text-gray-300"><div><h3 class="font-semibold text-white text-lg">🖥️ 마우스</h3><ul class="list-disc list-inside mt-1 space-y-1"><li><strong class="font-semibold text-white">모델 회전:</strong> 마우스 왼쪽 버튼을 누른 채 드래그</li><li><strong class="font-semibold text-white">화면 이동:</strong> 마우스 오른쪽 버튼을 누른 채 드래그</li><li><strong class="font-semibold text-white">확대/축소:</strong> 마우스 휠 스크롤</li></ul></div><div><h3 class="font-semibold text-white text-lg">📱 터치스크린</h3><ul class="list-disc list-inside mt-1 space-y-1"><li><strong class="font-semibold text-white">모델 회전:</strong> 한 손가락으로 드래그</li><li><strong class="font-semibold text-white">화면 이동:</strong> 두 손가락으로 드래그</li><li><strong class="font-semibold text-white">확대/축소:</strong> 두 손가락을 오므리거나 펼치기 (Pinch)</li></ul></div></div>
+        </div>
+    </div>
+
+    <!-- 모델 데이터베이스 (JSON) -->
+    <script type="application/json" id="model-database">{ "TOKYO-123": { "url": "https://threejs.org/examples/models/gltf/LittlestTokyo.glb", "description": "샘플: Littlest Tokyo" }, "FOX-456": { "type": "procedural", "generator": "createFoxModel", "description": "샘플: 로우폴리 여우" }, "POOP-789": { "type": "procedural", "generator": "createPoopModel", "description": "샘플: 응가" } }</script>
+    <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/" }}</script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+        import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+        import { FilmPass } from 'three/addons/postprocessing/FilmPass.js';
+        import { SepiaShader } from 'three/addons/shaders/SepiaShader.js';
+        import { LuminosityShader } from 'three/addons/shaders/LuminosityShader.js';
+        import { SobelOperatorShader } from 'three/addons/shaders/SobelOperatorShader.js';
+
+
+        const serialInput = document.getElementById('serial-input');
+        const loadSerialBtn = document.getElementById('load-serial-button');
+        const sampleSelect = document.getElementById('sample-select');
+        const errorMsg = document.getElementById('error-message');
+        const loadingIndicator = document.getElementById('loading-indicator');
+        const modelDescription = document.getElementById('model-description');
+        const dynamicControlsContainer = document.getElementById('dynamic-controls');
+        const loadedList = document.getElementById('loaded-list');
+        const helpButton = document.getElementById('help-button');
+        const helpModal = document.getElementById('help-modal');
+        const closeHelpButton = document.getElementById('close-help-button');
+        const screenshotButton = document.getElementById('screenshot-button');
+        const toggleUiButton = document.getElementById('toggle-ui-button');
+        
+        let scene, camera, renderer, controls, clock, gltfLoader, modelDatabase, composer, bloomPass;
+        let mixer, currentModel, activeAction, mainLight, currentFilterPass;
+        let filmPass, sepiaPass, grayscalePass;
+        let defaultCameraPos = new THREE.Vector3();
+        const loadedCommissions = {};
+
+        function init() {
+            const canvasContainer = document.getElementById('canvas-container');
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 2000);
+            renderer = new THREE.WebGLRenderer({ antias: true, alpha: true, preserveDrawingBuffer: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.outputColorSpace = THREE.SRGBColorSpace;
+            canvasContainer.appendChild(renderer.domElement);
+            
+            setupPostProcessing();
+            
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            clock = new THREE.Clock();
+
+            setupLighting();
+            setupLoaders();
+            setupUI();
+            modelDatabase = JSON.parse(document.getElementById('model-database').textContent);
+
+            animate();
+        }
+
+        function setupUI() {
+            loadSerialBtn.addEventListener('click', handleLoadSerialClick);
+            serialInput.addEventListener('keyup', (e) => { if (e.key === 'Enter') handleLoadSerialClick(); });
+            sampleSelect.addEventListener('change', handleSampleSelect);
+            window.addEventListener('resize', onWindowResize);
+            helpButton.addEventListener('click', () => helpModal.classList.remove('hidden'));
+            closeHelpButton.addEventListener('click', () => helpModal.classList.add('hidden'));
+            helpModal.addEventListener('click', (event) => { if (event.target === helpModal) helpModal.classList.add('hidden'); });
+            screenshotButton.addEventListener('click', takeScreenshot);
+            toggleUiButton.addEventListener('click', toggleUI);
+            setupBackgroundControls();
+            setupLightControls();
+            setupEffectsControls();
+        }
+
+        function toggleUI() {
+            const topHeader = document.getElementById('top-header');
+            const controlsPanel = document.getElementById('controls-panel');
+            const iconHide = document.getElementById('icon-hide');
+            const iconShow = document.getElementById('icon-show');
+
+            topHeader.classList.toggle('hidden');
+            controlsPanel.classList.toggle('hidden');
+            iconHide.classList.toggle('hidden');
+            iconShow.classList.toggle('hidden');
+        }
+
+        function setupPostProcessing() {
+            const renderPass = new RenderPass(scene, camera);
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderPass);
+
+            // 필터 패스 초기화
+            filmPass = new FilmPass(0.35, 0.025, 648, false);
+            sepiaPass = new ShaderPass(SepiaShader);
+            
+            // 흑백 효과를 위한 커스텀 셰이더 패스
+            const GrayscaleShader = {
+                uniforms: { tDiffuse: { value: null } },
+                vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 ); }`,
+                fragmentShader: `uniform sampler2D tDiffuse; varying vec2 vUv; void main() { vec4 color = texture2D( tDiffuse, vUv ); float gray = dot(color.rgb, vec3(0.299, 0.587, 0.114)); gl_FragColor = vec4(vec3(gray), color.a); }`
+            };
+            grayscalePass = new ShaderPass(GrayscaleShader);
+
+            // 블룸 패스 초기화 (항상 마지막에 추가)
+            bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+            bloomPass.strength = 0.0;
+            composer.addPass(bloomPass);
+        }
+
+        function setupLighting() {
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
+            scene.add(ambientLight);
+            mainLight = new THREE.DirectionalLight(0xffffff, 2.5);
+            mainLight.castShadow = true;
+            mainLight.shadow.mapSize.width = 2048;
+            mainLight.shadow.mapSize.height = 2048;
+            scene.add(mainLight);
+            const fillLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            fillLight.position.set(-5, -5, -5);
+            scene.add(fillLight);
+            updateLightPosition();
+        }
+
+        function setupLightControls() {
+            const rotationSlider = document.getElementById('light-rotation');
+            const heightSlider = document.getElementById('light-height');
+            rotationSlider.addEventListener('input', updateLightPosition);
+            heightSlider.addEventListener('input', updateLightPosition);
+        }
+
+        function updateLightPosition() {
+            const rotation = document.getElementById('light-rotation').value;
+            const height = document.getElementById('light-height').value;
+            const angle = THREE.MathUtils.degToRad(rotation);
+            const radius = 10;
+            mainLight.position.x = radius * Math.cos(angle);
+            mainLight.position.z = radius * Math.sin(angle);
+            mainLight.position.y = parseFloat(height);
+        }
+
+        function setupLoaders() {
+            const manager = new THREE.LoadingManager();
+            manager.onStart = () => { loadingIndicator.style.display = 'flex'; };
+            manager.onLoad = () => { loadingIndicator.style.display = 'none'; };
+            manager.onError = (url) => {
+                loadingIndicator.style.display = 'none';
+                errorMsg.textContent = '모델 로딩에 실패했습니다.';
+            };
+            const dracoLoader = new DRACOLoader();
+            dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+            gltfLoader = new GLTFLoader(manager);
+            gltfLoader.setDRACOLoader(dracoLoader);
+        }
+
+        function handleLoadSerialClick() {
+            const serial = serialInput.value.trim().toUpperCase();
+            if (!serial) { errorMsg.textContent = '시리얼 번호를 입력하세요.'; return; }
+            const modelData = modelDatabase[serial];
+            if (!modelData) { errorMsg.textContent = '유효하지 않은 시리얼 번호입니다.'; return; }
+            errorMsg.textContent = '';
+            serialInput.value = '';
+            if (!loadedCommissions[serial]) {
+                loadedCommissions[serial] = modelData;
+                updateLoadedList();
+            }
+            loadModel(modelData, serial);
+        }
+        
+        function handleSampleSelect() {
+            const serial = sampleSelect.value;
+            if (serial === "none") return;
+            const modelData = modelDatabase[serial];
+            loadModel(modelData, serial);
+        }
+
+        function updateLoadedList() {
+            loadedList.innerHTML = '';
+            for (const serial in loadedCommissions) {
+                const data = loadedCommissions[serial];
+                const li = document.createElement('li');
+                li.textContent = data.description || serial;
+                li.dataset.serial = serial;
+                li.className = 'p-2 model-list-item';
+                li.onclick = () => { loadModel(data, serial); };
+                loadedList.appendChild(li);
+            }
+        }
+
+        function loadModel(data, serialKey) {
+            if (currentModel) scene.remove(currentModel);
+            if (mixer) { mixer.stopAllAction(); mixer = null; }
+            dynamicControlsContainer.innerHTML = '';
+            sampleSelect.value = "none";
+            document.querySelectorAll('#loaded-list li').forEach(li => { li.classList.toggle('active', li.dataset.serial === serialKey); });
+            modelDescription.textContent = data.description || '모델 로딩 중...';
+            if (data.type === 'procedural') {
+                const model = proceduralGenerators[data.generator]();
+                setupModel(model);
+                loadingIndicator.style.display = 'none';
+            } else {
+                gltfLoader.load(data.url, (gltf) => { setupModel(gltf.scene, gltf.animations); });
+            }
+        }
+        
+        function setupModel(model, animations = []) {
+            currentModel = model;
+            scene.add(currentModel);
+            currentModel.traverse(node => { if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; }});
+            const box = new THREE.Box3().setFromObject(currentModel);
+            const size = box.getSize(new THREE.Vector3()).length();
+            const center = box.getCenter(new THREE.Vector3());
+            
+            defaultCameraPos.set(center.x + size * 1.5, center.y + size * 0.75, center.z + size * 1.5);
+            
+            controls.target.copy(center);
+            camera.position.copy(defaultCameraPos);
+            camera.lookAt(center);
+            controls.maxDistance = size * 10;
+            controls.minDistance = size * 0.5;
+            controls.update();
+
+            createDynamicControls(animations);
+        }
+
+        function createDynamicControls(animations) {
+            dynamicControlsContainer.innerHTML = '';
+            let controlsHtml = '';
+
+            controlsHtml += `<div id="camera-controls"><h3 class="font-bold text-lg mb-2 border-b border-gray-600 pb-1">카메라 뷰</h3><div class="grid grid-cols-2 gap-2 text-sm">
+                <button class="preset-btn p-2" data-view="default">기본</button><button class="preset-btn p-2" data-view="front">정면</button>
+                <button class="preset-btn p-2" data-view="side">측면</button><button class="preset-btn p-2" data-view="top">윗면</button>
+            </div></div>`;
+            
+            if (animations && animations.length) {
+                controlsHtml += `<div id="animation-controls" class="mt-4"><h3 class="font-bold text-lg mb-2 border-b border-gray-600 pb-1">애니메이션</h3><select id="animation-select" class="w-full bg-gray-700 border border-gray-600 rounded-md p-2 mt-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">${animations.map(clip => `<option value="${clip.name}">${clip.name}</option>`).join('')}</select><div class="flex space-x-2 mt-3"><button id="play-button" class="w-full bg-blue-600 hover:bg-blue-700 rounded-md py-2 text-sm font-semibold transition-colors">재생</button><button id="stop-button" class="w-full bg-gray-600 hover:bg-gray-700 rounded-md py-2 text-sm font-semibold transition-colors">정지</button></div></div>`;
+            }
+            dynamicControlsContainer.innerHTML = controlsHtml;
+            
+            setupCameraControls();
+            if (animations && animations.length) setupAnimationControls(animations);
+        }
+
+        function setupCameraControls() {
+            document.querySelectorAll('#camera-controls .preset-btn').forEach(button => {
+                button.addEventListener('click', (e) => {
+                    const view = e.currentTarget.dataset.view;
+                    const box = new THREE.Box3().setFromObject(currentModel);
+                    const center = box.getCenter(new THREE.Vector3());
+                    const size = box.getSize(new THREE.Vector3()).length();
+                    
+                    switch(view) {
+                        case 'front': camera.position.set(center.x, center.y, center.z + size * 1.5); break;
+                        case 'side': camera.position.set(center.x + size * 1.5, center.y, center.z); break;
+                        case 'top': camera.position.set(center.x, center.y + size * 1.5, center.z); break;
+                        case 'default': camera.position.copy(defaultCameraPos); break;
+                    }
+                    camera.lookAt(center);
+                });
+            });
+        }
+        
+        function setupAnimationControls(animations) {
+            mixer = new THREE.AnimationMixer(currentModel);
+            const animSelect = document.getElementById('animation-select');
+            const playBtn = document.getElementById('play-button');
+            const stopBtn = document.getElementById('stop-button');
+            const playSelected = () => {
+                if (!mixer) return;
+                const clip = THREE.AnimationClip.findByName(animations, animSelect.value);
+                if (activeAction) activeAction.stop();
+                activeAction = mixer.clipAction(clip);
+                activeAction.play();
+            };
+            playBtn.onclick = playSelected;
+            stopBtn.onclick = () => { if (activeAction) activeAction.stop(); };
+            animSelect.onchange = playSelected;
+            playSelected();
+        }
+
+        function setupBackgroundControls() {
+            const rgbeLoader = new RGBELoader();
+            document.querySelectorAll('.bg-preview').forEach(button => {
+                button.addEventListener('click', (e) => {
+                    document.querySelectorAll('.bg-preview').forEach(btn => btn.classList.remove('active'));
+                    e.currentTarget.classList.add('active');
+                    const type = e.currentTarget.dataset.bgType;
+                    const value = e.currentTarget.dataset.bgValue;
+                    if (type === 'color') {
+                        scene.background = new THREE.Color(value);
+                        scene.environment = null;
+                    } else if (type === 'hdri') {
+                        loadingIndicator.style.display = 'flex';
+                        rgbeLoader.load(value, (texture) => {
+                            texture.mapping = THREE.EquirectangularReflectionMapping;
+                            scene.background = texture;
+                            scene.environment = texture;
+                            loadingIndicator.style.display = 'none';
+                        });
+                    }
+                });
+            });
+        }
+        
+        function setupEffectsControls() {
+            const bloomPresetSelect = document.getElementById('bloom-preset');
+            const filterPresetSelect = document.getElementById('filter-preset');
+            const bloomPresets = {
+                off: { strength: 0.0, radius: 0, threshold: 0 },
+                subtle: { strength: 0.3, radius: 0.2, threshold: 0.85 },
+                strong: { strength: 0.6, radius: 0.4, threshold: 0.7 },
+                dreamy: { strength: 0.4, radius: 0.8, threshold: 0.3 }
+            };
+
+            bloomPresetSelect.addEventListener('change', (e) => {
+                const selectedPreset = bloomPresets[e.target.value];
+                if (selectedPreset) {
+                    bloomPass.strength = selectedPreset.strength;
+                    bloomPass.radius = selectedPreset.radius;
+                    bloomPass.threshold = selectedPreset.threshold;
+                }
+            });
+
+            filterPresetSelect.addEventListener('change', (e) => {
+                if (currentFilterPass) {
+                    composer.removePass(currentFilterPass);
+                    currentFilterPass = null;
+                }
+                
+                let newPass = null;
+                switch(e.target.value) {
+                    case 'grayscale': newPass = grayscalePass; break;
+                    case 'sepia': newPass = sepiaPass; break;
+                    case 'film': newPass = filmPass; break;
+                }
+
+                if (newPass) {
+                    composer.addPass(newPass);
+                    // 블룸 패스 앞에 필터를 위치시키기 위해 순서 조정
+                    const bloomIndex = composer.passes.indexOf(bloomPass);
+                    const newPassIndex = composer.passes.indexOf(newPass);
+                    if (bloomIndex !== -1 && newPassIndex > bloomIndex) {
+                        [composer.passes[bloomIndex], composer.passes[newPassIndex]] = [composer.passes[newPassIndex], composer.passes[bloomIndex]];
+                    }
+                    currentFilterPass = newPass;
+                }
+            });
+        }
+
+        function takeScreenshot() {
+            composer.render();
+            const dataURL = renderer.domElement.toDataURL('image/png');
+            const link = document.createElement('a');
+            link.href = dataURL;
+            link.download = 'screenshot.png';
+            link.click();
+        }
+
+        const proceduralGenerators = {
+            createFoxModel: () => { const fox = new THREE.Group(); const orangeMaterial = new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.5, flatShading: true }); const whiteMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5, flatShading: true }); const body = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.6, 0.7), orangeMaterial); body.position.y = 0.5; fox.add(body); const head = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), orangeMaterial); head.position.set(0.9, 0.8, 0); fox.add(head); const snout = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), whiteMaterial); snout.position.set(1.4, 0.6, 0); fox.add(snout); const leftEar = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.4, 4), orangeMaterial); leftEar.position.set(0.8, 1.3, 0.25); leftEar.rotation.x = -Math.PI / 4; fox.add(leftEar); const rightEar = leftEar.clone(); rightEar.position.z = -0.25; rightEar.rotation.z = Math.PI; fox.add(rightEar); const legGeom = new THREE.BoxGeometry(0.2, 0.5, 0.2); const fL = new THREE.Mesh(legGeom, orangeMaterial); fL.position.set(0.5, 0.25, 0.25); fox.add(fL); const fR = fL.clone(); fR.position.z = -0.25; fox.add(fR); const bL = fL.clone(); bL.position.x = -0.5; fox.add(bL); const bR = bL.clone(); bR.position.z = -0.25; fox.add(bR); const tail = new THREE.Mesh(new THREE.ConeGeometry(0.3, 1.2, 4), orangeMaterial); tail.position.set(-1.2, 0.6, 0); tail.rotation.z = Math.PI / 2; fox.add(tail); return fox; },
+            createPoopModel: () => { const poop = new THREE.Group(); const brownMaterial = new THREE.MeshStandardMaterial({ color: 0x86592d, roughness: 0.8, flatShading: true }); const t1 = new THREE.Mesh(new THREE.TorusGeometry(0.6, 0.25, 8, 12), brownMaterial); t1.rotation.x = Math.PI / 2; poop.add(t1); const t2 = new THREE.Mesh(new THREE.TorusGeometry(0.48, 0.25, 8, 12), brownMaterial); t2.rotation.x = Math.PI / 2; t2.position.y = 0.3; poop.add(t2); const t3 = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.25, 8, 12), brownMaterial); t3.rotation.x = Math.PI / 2; t3.position.y = 0.6; poop.add(t3); const top = new THREE.Mesh(new THREE.SphereGeometry(0.24, 8, 8), brownMaterial); top.position.y = 0.9; poop.add(top); poop.position.y = 0.3; return poop; }
+        };
+        
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        }
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+            if (mixer) mixer.update(delta);
+            controls.update();
+            composer.render();
+        }
+
+        init();
+    </script>
+</body>
+</html>
