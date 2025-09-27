@@ -92,6 +92,18 @@
                 </div>
             </div>
         </div>
+         <!-- 스크린샷 설정 섹션 -->
+         <div id="screenshot-controls" class="mt-4">
+            <h3 class="font-bold text-lg mb-2 border-b border-gray-600 pb-1">스크린샷 설정</h3>
+            <div class="text-sm">
+                <label for="aspect-ratio-preset" class="text-gray-300">화면 비율</label>
+                <select id="aspect-ratio-preset" class="w-full bg-gray-700 border border-gray-600 rounded-md p-2 mt-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="none">전체 화면</option>
+                    <option value="1.7777">16:9 (가로)</option>
+                    <option value="1">1:1 (정방형)</option>
+                </select>
+            </div>
+        </div>
         <!-- 동적 컨트롤 섹션 -->
         <div id="dynamic-controls" class="mt-4"></div>
         <!-- 배경 설정 섹션 (고정) -->
@@ -104,6 +116,11 @@
                 <button class="bg-preview" data-bg-type="hdri" data-bg-value="https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/studio_small_03_1k.hdr" style="background-image: linear-gradient(to bottom right, #a78bfa, #fde047);"></button>
             </div>
         </div>
+    </div>
+
+    <!-- 스크린샷 가이드 -->
+    <div id="crop-overlay" class="fixed inset-0 z-10 pointer-events-none hidden">
+        <div id="crop-rectangle" class="absolute border-2 border-dashed border-white/50" style="box-shadow: 0 0 0 9999px rgba(0,0,0,0.5);"></div>
     </div>
 
     <!-- 하단 아이콘 버튼들 -->
@@ -136,35 +153,40 @@
         import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
         import { FilmPass } from 'three/addons/postprocessing/FilmPass.js';
         import { SepiaShader } from 'three/addons/shaders/SepiaShader.js';
-        import { LuminosityShader } from 'three/addons/shaders/LuminosityShader.js';
-        import { SobelOperatorShader } from 'three/addons/shaders/SobelOperatorShader.js';
 
-
-        const serialInput = document.getElementById('serial-input');
-        const loadSerialBtn = document.getElementById('load-serial-button');
-        const sampleSelect = document.getElementById('sample-select');
-        const errorMsg = document.getElementById('error-message');
-        const loadingIndicator = document.getElementById('loading-indicator');
-        const modelDescription = document.getElementById('model-description');
-        const dynamicControlsContainer = document.getElementById('dynamic-controls');
-        const loadedList = document.getElementById('loaded-list');
-        const helpButton = document.getElementById('help-button');
-        const helpModal = document.getElementById('help-modal');
-        const closeHelpButton = document.getElementById('close-help-button');
-        const screenshotButton = document.getElementById('screenshot-button');
-        const toggleUiButton = document.getElementById('toggle-ui-button');
-        
         let scene, camera, renderer, controls, clock, gltfLoader, modelDatabase, composer, bloomPass;
         let mixer, currentModel, activeAction, mainLight, currentFilterPass;
         let filmPass, sepiaPass, grayscalePass;
         let defaultCameraPos = new THREE.Vector3();
         const loadedCommissions = {};
+        
+        let serialInput, loadSerialBtn, sampleSelect, errorMsg, loadingIndicator, modelDescription, 
+            dynamicControlsContainer, loadedList, helpButton, helpModal, closeHelpButton, 
+            screenshotButton, toggleUiButton, cropOverlay, cropRectangle, aspectRatioPreset;
 
         function init() {
+            // DOM Element lookups moved here to ensure they exist.
             const canvasContainer = document.getElementById('canvas-container');
+            serialInput = document.getElementById('serial-input');
+            loadSerialBtn = document.getElementById('load-serial-button');
+            sampleSelect = document.getElementById('sample-select');
+            errorMsg = document.getElementById('error-message');
+            loadingIndicator = document.getElementById('loading-indicator');
+            modelDescription = document.getElementById('model-description');
+            dynamicControlsContainer = document.getElementById('dynamic-controls');
+            loadedList = document.getElementById('loaded-list');
+            helpButton = document.getElementById('help-button');
+            helpModal = document.getElementById('help-modal');
+            closeHelpButton = document.getElementById('close-help-button');
+            screenshotButton = document.getElementById('screenshot-button');
+            toggleUiButton = document.getElementById('toggle-ui-button');
+            cropOverlay = document.getElementById('crop-overlay');
+            cropRectangle = document.getElementById('crop-rectangle');
+            aspectRatioPreset = document.getElementById('aspect-ratio-preset');
+
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 2000);
-            renderer = new THREE.WebGLRenderer({ antias: true, alpha: true, preserveDrawingBuffer: true });
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.shadowMap.enabled = true;
@@ -196,6 +218,7 @@
             helpModal.addEventListener('click', (event) => { if (event.target === helpModal) helpModal.classList.add('hidden'); });
             screenshotButton.addEventListener('click', takeScreenshot);
             toggleUiButton.addEventListener('click', toggleUI);
+            aspectRatioPreset.addEventListener('change', updateCropGuide);
             setupBackgroundControls();
             setupLightControls();
             setupEffectsControls();
@@ -218,11 +241,9 @@
             composer = new EffectComposer(renderer);
             composer.addPass(renderPass);
 
-            // 필터 패스 초기화
             filmPass = new FilmPass(0.35, 0.025, 648, false);
             sepiaPass = new ShaderPass(SepiaShader);
             
-            // 흑백 효과를 위한 커스텀 셰이더 패스
             const GrayscaleShader = {
                 uniforms: { tDiffuse: { value: null } },
                 vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 ); }`,
@@ -230,7 +251,6 @@
             };
             grayscalePass = new ShaderPass(GrayscaleShader);
 
-            // 블룸 패스 초기화 (항상 마지막에 추가)
             bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
             bloomPass.strength = 0.0;
             composer.addPass(bloomPass);
@@ -435,9 +455,9 @@
             const filterPresetSelect = document.getElementById('filter-preset');
             const bloomPresets = {
                 off: { strength: 0.0, radius: 0, threshold: 0 },
-                subtle: { strength: 0.3, radius: 0.2, threshold: 0.85 },
-                strong: { strength: 0.6, radius: 0.4, threshold: 0.7 },
-                dreamy: { strength: 0.4, radius: 0.8, threshold: 0.3 }
+                subtle: { strength: 0.25, radius: 0.3, threshold: 0.85 },
+                strong: { strength: 0.5, radius: 0.5, threshold: 0.75 },
+                dreamy: { strength: 0.35, radius: 0.8, threshold: 0.6 }
             };
 
             bloomPresetSelect.addEventListener('change', (e) => {
@@ -463,25 +483,75 @@
                 }
 
                 if (newPass) {
-                    composer.addPass(newPass);
-                    // 블룸 패스 앞에 필터를 위치시키기 위해 순서 조정
                     const bloomIndex = composer.passes.indexOf(bloomPass);
-                    const newPassIndex = composer.passes.indexOf(newPass);
-                    if (bloomIndex !== -1 && newPassIndex > bloomIndex) {
-                        [composer.passes[bloomIndex], composer.passes[newPassIndex]] = [composer.passes[newPassIndex], composer.passes[bloomIndex]];
-                    }
+                    composer.passes.splice(bloomIndex, 0, newPass);
                     currentFilterPass = newPass;
                 }
             });
         }
 
-        function takeScreenshot() {
+        function updateCropGuide() {
+            const preset = aspectRatioPreset.value;
+            if (preset === 'none') {
+                cropOverlay.classList.add('hidden');
+                return;
+            }
+
+            cropOverlay.classList.remove('hidden');
+            const targetAspect = parseFloat(preset);
+            const viewWidth = window.innerWidth;
+            const viewHeight = window.innerHeight;
+            const viewAspect = viewWidth / viewHeight;
+
+            let cropWidth, cropHeight;
+            if (viewAspect > targetAspect) {
+                cropHeight = viewHeight;
+                cropWidth = cropHeight * targetAspect;
+            } else {
+                cropWidth = viewWidth;
+                cropHeight = cropWidth / targetAspect;
+            }
+
+            cropRectangle.style.width = `${cropWidth}px`;
+            cropRectangle.style.height = `${cropHeight}px`;
+            cropRectangle.style.left = `${(viewWidth - cropWidth) / 2}px`;
+            cropRectangle.style.top = `${(viewHeight - cropHeight) / 2}px`;
+        }
+
+        async function takeScreenshot() {
+            const preset = aspectRatioPreset.value;
+            const uiElements = [document.getElementById('top-header'), document.getElementById('controls-panel'), document.querySelector('.fixed.bottom-4')];
+            if (preset !== 'none') uiElements.push(cropOverlay);
+            
+            uiElements.forEach(el => el.style.visibility = 'hidden');
+            await new Promise(resolve => setTimeout(resolve, 50)); 
+
             composer.render();
-            const dataURL = renderer.domElement.toDataURL('image/png');
-            const link = document.createElement('a');
-            link.href = dataURL;
-            link.download = 'screenshot.png';
-            link.click();
+            const fullDataURL = renderer.domElement.toDataURL('image/png');
+
+            if (preset === 'none') {
+                 const link = document.createElement('a');
+                 link.href = fullDataURL;
+                 link.download = 'screenshot-full.png';
+                 link.click();
+            } else {
+                const tempCanvas = document.createElement('canvas');
+                const tempCtx = tempCanvas.getContext('2d');
+                const img = new Image();
+                img.onload = () => {
+                    const dpr = window.devicePixelRatio;
+                    const rect = cropRectangle.getBoundingClientRect();
+                    tempCanvas.width = rect.width * dpr;
+                    tempCanvas.height = rect.height * dpr;
+                    tempCtx.drawImage(img, rect.left * dpr, rect.top * dpr, rect.width * dpr, rect.height * dpr, 0, 0, rect.width * dpr, rect.height * dpr);
+                    const link = document.createElement('a');
+                    link.href = tempCanvas.toDataURL('image/png');
+                    link.download = 'screenshot-cropped.png';
+                    link.click();
+                };
+                img.src = fullDataURL;
+            }
+            uiElements.forEach(el => el.style.visibility = 'visible');
         }
 
         const proceduralGenerators = {
@@ -494,6 +564,7 @@
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
             composer.setSize(window.innerWidth, window.innerHeight);
+            updateCropGuide();
         }
         function animate() {
             requestAnimationFrame(animate);
@@ -507,3 +578,4 @@
     </script>
 </body>
 </html>
+
